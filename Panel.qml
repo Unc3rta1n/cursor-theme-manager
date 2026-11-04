@@ -4,7 +4,6 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
-import qs.Ui
 import "components"
 import "CursorModel.js" as Model
 
@@ -62,6 +61,9 @@ Item {
 
   Connections {
     target: root.service
+    function onReadyChanged() {
+      if (root.service && root.service.ready && root.opened) root.open("{}")
+    }
     function onThemesChangedByScan() {
       if (root.service && root.themeIndex >= root.service.themes.length) {
         root.themeIndex = Math.max(0, root.service.themes.length - 1)
@@ -778,7 +780,7 @@ Item {
 
             Text {
               width: parent.width
-              text: "Cursor Theme Manager needs to remember your previous cursor and install its user-level cleanup integration so that normal Omarchy plugin removal can restore your cursor automatically."
+              text: "Cursor Theme Manager needs to remember your previous cursor and install its user-level cleanup integration so that removing the application directory can restore your cursor automatically."
               textFormat: Text.PlainText
               color: Color.popups.text
               font.family: Style.font.family
@@ -919,7 +921,7 @@ Item {
 
             Text {
               width: parent.width
-              text: "Registers Cursor Theme Manager in your application launcher and arms automatic cleanup when the plugin is removed via Omarchy.\n\nInstalled artifacts upon consent:\n• ~/.local/share/applications/cursor-theme-manager.desktop\n• ~/.local/libexec/cursor-theme-manager/cleanup\n• ~/.config/systemd/user/cursor-theme-manager-cleanup.path\n• ~/.config/systemd/user/cursor-theme-manager-cleanup.service"
+              text: "Registers Cursor Theme Manager in your application launcher and arms automatic cleanup when the application directory is removed.\n\nInstalled artifacts upon consent:\n• ~/.local/share/applications/cursor-theme-manager.desktop\n• ~/.local/libexec/cursor-theme-manager/cleanup\n• ~/.config/systemd/user/cursor-theme-manager-cleanup.path\n• ~/.config/systemd/user/cursor-theme-manager-cleanup.service"
               textFormat: Text.PlainText
               color: Color.popups.text
               font.family: Style.font.family

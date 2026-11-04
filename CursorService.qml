@@ -58,6 +58,8 @@ Item {
   property bool _started: false
   property bool _stateLoaded: false
   property bool _scanLoaded: false
+  property string _currentXcursor: ""
+  property int _currentCursorSize: 24
   property var _loadedState: ({ ok: false, reason: "missing", theme: null, size: 16 })
   property var _queuedApply: null
 
@@ -310,6 +312,8 @@ Item {
   function parseDiscovery(raw) {
     try {
       var parsed = JSON.parse(String(raw || ""))
+      _currentXcursor = parsed.currentXcursor || ""
+      _currentCursorSize = Model.validSize(parsed.currentSize)
       var normalized = Model.normalizeThemes(parsed.themes)
       themes = normalized
       themeModelVersion++
@@ -409,7 +413,7 @@ Item {
       return
     }
 
-    committedSize = Model.validSize(_loadedState.size)
+    committedSize = Model.validSize(_loadedState.theme || _loadedState.cursorModifiedByCtm ? _loadedState.size : _currentCursorSize)
     requestedSize = committedSize
     liveAppliedSize = committedSize
     _persistedSize = committedSize
@@ -420,7 +424,7 @@ Item {
     integrationPromptSeen = startup.integrationPromptSeen || setupDismissedThisSession
 
     var found = _loadedState.ok ? Model.findTheme(themes, _loadedState.theme) : null
-    if (!found) found = Model.fallbackTheme(themes, currentXcursor)
+    if (!found) found = Model.fallbackTheme(themes, currentXcursor || _currentXcursor)
     committedTheme = found
 
     ready = true

@@ -65,7 +65,6 @@ def get_paths() -> Dict[str, str]:
     home = os.environ.get("HOME", os.path.expanduser("~"))
     config_home = os.environ.get("XDG_CONFIG_HOME", os.path.join(home, ".config"))
     data_home = os.environ.get("XDG_DATA_HOME", os.path.join(home, ".local", "share"))
-    plugin_dir = os.path.join(config_home, "omarchy", "plugins", PLUGIN_ID)
 
     return {
         "desktop": os.path.join(data_home, "applications", "cursor-theme-manager.desktop"),
@@ -74,15 +73,34 @@ def get_paths() -> Dict[str, str]:
         "systemd_user": os.path.join(config_home, "systemd", "user"),
         "path_unit": os.path.join(config_home, "systemd", "user", "cursor-theme-manager-cleanup.path"),
         "service_unit": os.path.join(config_home, "systemd", "user", "cursor-theme-manager-cleanup.service"),
-        "plugin_dir": plugin_dir if os.path.isdir(plugin_dir) else str(SCRIPT_DIR.parent)
+        "plugin_dir": get_plugin_installation_path(),
     }
 
 
 def get_plugin_installation_path() -> str:
+    if os.environ.get("CTM_STANDALONE") == "1":
+        return str(SCRIPT_DIR.parent)
     home = os.environ.get("HOME", os.path.expanduser("~"))
     config_home = os.environ.get("XDG_CONFIG_HOME", os.path.join(home, ".config"))
     installed_plugin_dir = os.path.join(config_home, "omarchy", "plugins", PLUGIN_ID)
-    return installed_plugin_dir if os.path.lexists(installed_plugin_dir) else str(SCRIPT_DIR.parent)
+    if os.path.lexists(installed_plugin_dir):
+        return installed_plugin_dir
+    return str(SCRIPT_DIR.parent)
+
+
+def standalone_installation() -> bool:
+    """Keep legacy Omarchy installs working while supporting the standalone host."""
+    config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    return get_plugin_installation_path() != str(config / "omarchy" / "plugins" / PLUGIN_ID)
+
+
+def quoted_desktop_argument(value: str) -> str:
+    """Quote one Desktop Entry Exec argument, including field-code escaping."""
+    if any(char in value for char in ("\n", "\r", "\0")):
+        raise ValueError("Installation path contains control characters")
+    escaped = value.replace("\\", "\\\\\\\\").replace('"', '\\\\"')
+    escaped = escaped.replace("$", "\\\\$").replace("`", "\\\\`").replace("%", "%%")
+    return '"' + escaped + '"'
 
 
 def get_plugin_installation_fingerprint(plugin_path: Optional[str] = None) -> Optional[str]:
@@ -464,21 +482,43 @@ def enable_integration(expected_plugin_fingerprint: Optional[str] = None) -> Dic
         "\n", f"\n# {OWNERSHIP_MARKER}\n# {PLUGIN_ID}\n# X-CursorThemeManager-Instance={instance_id}\n", 1
     )
 
+    standalone = standalone_installation()
+    plugin_path = paths["plugin_dir"]
+    if standalone:
+        cleanup_content = cleanup_content.replace(
+            "INSTALLATION_PATH = None", f"INSTALLATION_PATH = {plugin_path!r}", 1,
+        )
+    desktop_command = (quoted_desktop_argument(str(Path(plugin_path) / "cursor-theme-manager"))
+                       if standalone else f"omarchy-shell shell toggle {PLUGIN_ID}")
+
     desktop_content = f"""[Desktop Entry]
 Type=Application
 Name=Cursor Theme Manager
 GenericName=Cursor Theme
 Comment=Preview and manage cursor themes
-Exec=omarchy-shell shell toggle {PLUGIN_ID}
+Exec={desktop_command}
 Icon=input-mouse
 Terminal=false
 Categories=Settings;DesktopSettings;
 Keywords=cursor;theme;mouse;pointer;hyprcursor;xcursor;
 {OWNERSHIP_MARKER}
+X-CursorThemeManager-Plugin={PLUGIN_ID}
 X-CursorThemeManager-Instance={instance_id}
 """
 
     path_unit_content = f"# X-CursorThemeManager-Instance={instance_id}\n{PATH_UNIT_CONTENT}"
+    if standalone:
+        if any(char in plugin_path for char in ("\n", "\r", "\0")):
+            raise ValueError("Installation path contains control characters")
+        if plugin_path.endswith(("\\", " ", "\t")):
+            raise ValueError("Installation path ends with unsupported whitespace or backslash")
+        # PathChanged takes a literal absolute path, not a quoted Exec argument.
+        watched = plugin_path.replace("%", "%%")
+        parent = str(Path(plugin_path).parent).replace("%", "%%")
+        path_unit_content = path_unit_content.replace(
+            "PathChanged=%h/.config/omarchy/plugins",
+            f"PathChanged={watched}\nPathChanged={parent}",
+        )
 
     service_content = f"""# {OWNERSHIP_MARKER}
 # {PLUGIN_ID}
@@ -539,11 +579,13 @@ ExecStart=%h/.local/libexec/cursor-theme-manager/cleanup --instance {instance_id
         # 4. Systemd activation phase
         reload_res = run_bounded(["systemctl", "--user", "daemon-reload"], timeout=TIMEOUT_INTEGRATION)
         if not reload_res.ok:
-            raise RuntimeError(f"systemctl daemon-reload failed: {reload_res.error}")
+            detail = reload_res.stderr or reload_res.error or str(reload_res.exit_code)
+            raise RuntimeError(f"systemctl daemon-reload failed: {detail}")
 
         enable_res = run_bounded(["systemctl", "--user", "enable", "--now", "cursor-theme-manager-cleanup.path"], timeout=TIMEOUT_INTEGRATION)
         if not enable_res.ok:
-            raise RuntimeError(f"systemctl enable --now cleanup.path failed: {enable_res.error}")
+            detail = enable_res.stderr or enable_res.error or str(enable_res.exit_code)
+            raise RuntimeError(f"systemctl enable --now cleanup.path failed: {detail}")
 
         # Update desktop database best-effort
         if resolve_system_executable("update-desktop-database"):
@@ -570,6 +612,14 @@ ExecStart=%h/.local/libexec/cursor-theme-manager/cleanup --instance {instance_id
 
     except Exception as e:
         # Transactional Rollback: clean up all temporary and installed files
+        rollback_error = ""
+        if installed_targets and previous_artifacts.get(path_unit) is None:
+            disable_res = run_bounded(
+                ["systemctl", "--user", "disable", "--now", "cursor-theme-manager-cleanup.path"],
+                timeout=TIMEOUT_INTEGRATION,
+            )
+            if not disable_res.ok:
+                rollback_error = disable_res.stderr or disable_res.error or str(disable_res.exit_code)
         for tmp_path, _, _, _ in tmp_manifest:
             safe_unlink_file_path(tmp_path)
 
@@ -591,6 +641,8 @@ ExecStart=%h/.local/libexec/cursor-theme-manager/cleanup --instance {instance_id
                 pass
 
         run_bounded(["systemctl", "--user", "daemon-reload"], timeout=2.0)
+        if rollback_error:
+            return {"ok": False, "error": f"Integration installation failed: {e}; rollback incomplete: {rollback_error}"}
         return {"ok": False, "error": f"Integration installation failed and was rolled back: {e}"}
 
 

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(builtin cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+case "${1:-}" in
+    --daemon)
+        export CTM_START_HIDDEN=1
+        exec qs -p "$root" -n -d
+        ;;
+    --quit)
+        exec qs -p "$root" ipc call manager quit
+        ;;
+    "")
+        if qs -p "$root" ipc call manager open 2>/dev/null; then
+            exit 0
+        fi
+        exec qs -p "$root" -n -d
+        ;;
+    *)
+        printf 'Usage: %s [--daemon|--quit]\n' "$0" >&2
+        exit 2
+        ;;
+esac

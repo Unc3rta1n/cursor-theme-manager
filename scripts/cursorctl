@@ -344,10 +344,22 @@ def run_discover():
             if valid_name(inh):
                 current_xcursor = inh
 
+    size_result = run_bounded(
+        ["gsettings", "get", "org.gnome.desktop.interface", "cursor-size"],
+        timeout=2.0, stdout_limit=LIMIT_STDOUT_SMALL,
+    )
+    try:
+        current_size = int(size_result.stdout.strip()) if size_result.ok else 24
+    except ValueError:
+        current_size = 24
+    if current_size not in secure_state.SUPPORTED_SIZES:
+        current_size = 24
+
     int_status = integration_manager.get_status()
     emit_bounded_json({
         "themes": discovered_themes,
         "currentXcursor": sanitize_text(current_xcursor, max_len=MAX_LEN_THEME_ID),
+        "currentSize": current_size,
         "integrationEnabled": int_status["enabled"],
         "integrationPromptSeen": int_status["promptSeen"],
         "trustedTools": {
@@ -848,6 +860,12 @@ def run_persist_size(hypr: str, xcursor: str, size: int):
 
     # 1. Atomic state update (immutable preCtmCursor baseline)
     st = secure_state.read_state()
+    if not st.get("theme") and (hypr not in ("", "-") or xcursor not in ("", "-")):
+        st["theme"] = {
+            "displayName": xcursor if xcursor not in ("", "-") else hypr,
+            "hyprcursor": hypr if hypr != "-" else "",
+            "xcursor": xcursor if xcursor != "-" else "",
+        }
     st["size"] = size
     st["cursorModifiedByCtm"] = True
     if not secure_state.write_state(st):
@@ -1133,7 +1151,9 @@ def main():
 
     elif cmd == "recovery-reconcile":
         import cleanup_helper
-        res = cleanup_helper.reconcile_orphaned_state(expected_fingerprint or "")
+        res = cleanup_helper.reconcile_orphaned_state(
+            expected_fingerprint or "", installation_path=integration_manager.get_plugin_installation_path(),
+        )
         emit_bounded_json(res, exit_code=0 if res.get("ok") else 1)
 
     elif cmd == "discover":

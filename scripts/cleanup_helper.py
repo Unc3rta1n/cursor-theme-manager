@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 PLUGIN_ID = "sanjyay.cursor-theme-manager"
+INSTALLATION_PATH = None
 OWNERSHIP_MARKER = "X-CursorThemeManager-Owned=true"
 
 NAME_RE = re.compile(r'^[a-zA-Z0-9_\-\.\ ]+$')
@@ -451,7 +452,7 @@ def get_paths() -> dict:
         "config_home": config_home,
         "data_home": data_home,
         "state_home": state_home,
-        "plugin_dir": os.path.join(config_home, "omarchy", "plugins", PLUGIN_ID),
+        "plugin_dir": INSTALLATION_PATH or str(Path(config_home) / "omarchy" / "plugins" / PLUGIN_ID),
         "desktop_file": os.path.join(data_home, "applications", "cursor-theme-manager.desktop"),
         "state_dir": os.path.join(state_home, "cursor-theme-manager"),
         "state_file": os.path.join(state_home, "cursor-theme-manager", "state.json"),
@@ -974,7 +975,7 @@ def retire_old_instance_artifacts(expected_instance: Optional[str] = None) -> No
                 run_cmd(["update-desktop-database", "-q", os.path.dirname(paths["desktop_file"])])
 
 
-def reconcile_orphaned_state(current_plugin_fingerprint: str) -> dict:
+def reconcile_orphaned_state(current_plugin_fingerprint: str, installation_path: str | None = None) -> dict:
     """Finish verified recovery when no old cleanup actor remains.
 
     This is called by the newly installed plugin while its UI is quarantined.
@@ -982,6 +983,8 @@ def reconcile_orphaned_state(current_plugin_fingerprint: str) -> dict:
     then compare-deletes only that old generation's state document.
     """
     paths = get_paths()
+    if installation_path is not None:
+        paths["plugin_dir"] = installation_path
     current_fingerprint = get_plugin_installation_fingerprint(paths["plugin_dir"])
     if (not re.fullmatch(r"[a-f0-9]{64}", str(current_plugin_fingerprint or "")) or
             current_fingerprint != current_plugin_fingerprint):

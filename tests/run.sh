@@ -107,8 +107,19 @@ echo "=== 12. Size Coalescing & Fast-Path Tests ==="
 python3 tests/size_coalescing.test.py
 
 echo "=== 13. QML Lint Validation ==="
-qmllint -I /usr/share/omarchy/shell Panel.qml CursorService.qml components/*.qml
-qmllint tests/manual-cursor-roles.qml
+qml_imports="$GLOBAL_SANDBOX/qml-imports"
+mkdir -p "$qml_imports"
+ln -s "$ROOT" "$qml_imports/qs"
+qml_lint_args=(-I "$qml_imports")
+IFS=: read -r -a extra_qml_imports <<< "${QML_IMPORT_PATH:-}"
+for qml_path in "${extra_qml_imports[@]}"; do
+  [[ -z $qml_path ]] || qml_lint_args+=(-I "$qml_path")
+done
+"${QMLLINT:-qmllint}" "${qml_lint_args[@]}" shell.qml Commons/*.qml Panel.qml CursorService.qml components/*.qml
+"${QMLLINT:-qmllint}" "${qml_lint_args[@]}" tests/manual-cursor-roles.qml
+
+echo "=== 14. Standalone Integration ==="
+python3 tests/standalone.test.py
 
 # Strict production executable resolution means subprocess lifecycle tests can
 # reach the real user systemd manager even under an isolated HOME. Restore the
